@@ -1,16 +1,13 @@
 from absl import flags
 from absl import logging
-import envlogger
 from envlogger.backends import tfds_backend_writer
 from envlogger.step_data import StepData
 
 import numpy as np
-import tensorflow as tf
 import tensorflow_datasets as tfds
 import dm_env
 
-import rclpy
-from .utils import ConvertROS2ToNumpy, ConvertNumpyToTFDSFeatures
+from .utils import ConvertRos2DictToDict, ConvertDictToTFDS
 from enum import Enum
 
 from absl import logging
@@ -80,9 +77,9 @@ class ROS2_RLDS():
         if len(self._action_example) == 0 or len(self._observation_example) == 0:
             raise ValueError('The action and observation examples must not be empty.')
         
-        action_info = ConvertNumpyToTFDSFeatures(self._action_example)
-        observation_info = ConvertNumpyToTFDSFeatures(self._observation_example)
-        reward_info = ConvertNumpyToTFDSFeatures(self._reward_example)
+        action_info = ConvertDictToTFDS(self._action_example)
+        observation_info = ConvertDictToTFDS(self._observation_example)
+        reward_info = ConvertDictToTFDS(self._reward_example)
         
         if self.DEBUG:
             self.nh.get_logger().info('action_info: {}'.format(action_info))
@@ -101,12 +98,12 @@ class ROS2_RLDS():
         #
     def GetNextObservation(self):
         raw_observation = self._observation_cb()
-        return ConvertROS2ToNumpy(raw_observation)
+        return ConvertRos2DictToDict(raw_observation)
         
     def GetNextAction(self):
         # call the action cb to get a dictionary of topic_names -> ROS2 messages
         raw_action = self._action_cb()
-        return ConvertROS2ToNumpy(raw_action)
+        return ConvertRos2DictToDict(raw_action)
     
     def GetNextReward(self):
         # call the reward cb to get a dictionary of topic_names -> ROS2 messages
@@ -114,7 +111,7 @@ class ROS2_RLDS():
             return 0.0
         else:
             ros2_reward = self._ros2_reward_cb()
-            return ConvertROS2ToNumpy(ros2_reward)
+            return ConvertRos2DictToDict(ros2_reward)
         
     def RunTimer(self):
         # make the env

@@ -9,14 +9,13 @@ from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
-from rclpy.serialization import serialize_message
 from rqt_py_common import message_helpers
-from .ros2_envlogger import ROS2EnvLogger
-import threading
+
+# local import (same folder)
+from .ros2_rlds import ROS2_RLDS
 
 ### ROS2 Messages
-from std_msgs.msg import String, Int32, Bool
-from sensor_msgs.msg import JointState
+from std_msgs.msg import Int32, Bool, Float64
 
 ### ROS2 Srvs
 from std_srvs.srv import Trigger
@@ -62,7 +61,7 @@ class TFLookup():
         return all_frames
 
 class ROS2Data():
-    def __init__(self, node, descriptor, tf_wrapper):
+    def __init__(self, node, descriptor, tf_wrapper, required=True):
         # inputs
         self.node = node
         self.descriptor = descriptor
@@ -70,8 +69,12 @@ class ROS2Data():
         
         # members
         self.topics = [] # list of [topic_name1, ...]
-        self.data = {} # topic name : msg
+        self.data = {} # dict of topic name : msg
         self.tfs = {} # parent frame : child frame
+        
+        # if this data is not required, then set a default Float64 msg
+        if not required:
+            self.data["default_topic"] = Float64()
         
     def TopicCallback(self, msg, topic_name):
         self.data[topic_name] = msg
@@ -101,23 +104,27 @@ class ROS2Data():
         
         return dd
     
-    def Load(self, dd):
-        self.topics = dd["topics"]
-        self.tfs = dd["tfs"]
+    def Load(self, dd1):
+        if self.descriptor not in dd1:
+            return
+        
+        dd2 = dd1[self.descriptor]
+        self.topics = dd2["topics"]
+        self.tfs = dd2["tfs"]
         
         if (DEBUG):
             self.node.get_logger().info("{} loaded: ".format(self.descriptor))
-            self.node.get_logger().info(json.dumps(dd))
+            self.node.get_logger().info(json.dumps(dd2))
 
 
-class ROS2EnvLoggerServer(Node):
+class ROS2ToRLDSServer(Node):
     """
-        Server for setting up data collection instances using the ROS2EnvLogger class.
+        Server for setting up data collection instances using the ROS2_RLDS class.
         Frontend should specify which topics are 'actions' and which are 'observations'
         Frontend should let user start and stop data collection
     """
     def __init__(self):
-        super().__init__('ROS2EnvLoggerServer')
+        super().__init__('ROS2ToRLDSServer')
         # parameters
         self.user_str = os.path.expanduser('~')
         self.data_dir = os.path.join(self.user_str, 'data')
@@ -128,9 +135,8 @@ class ROS2EnvLoggerServer(Node):
         self.subscribers = {}
         self.alltopics = self.GetROSTopicsAndTypes() # topic name : topic type
         
-        # Env Logger Things
+        # Data Collector Logger Things
         self.rate = 10 # default hz
-        self.env_logger_thread = None
         
         # movestate subscriber
         self.sub1 = self.create_subscription(Int32, "/avatar/safety/movestate", self.MovestateCB, 10)
@@ -177,13 +183,13 @@ class ROS2EnvLoggerServer(Node):
         # init
         self.Reset()
             
-        self.get_logger().info("ROS2EnvLoggerServer initialized.")
+        self.get_logger().info("ROS2ToRLDSServer initialized.")
 
             
     def Reset(self):
         self.action_class = ROS2Data(self, "actions", self.tf_wrapper)
         self.observation_class = ROS2Data(self, "observations", self.tf_wrapper)
-        self.rewards_class = ROS2Data(self, "rewards", self.tf_wrapper)
+        self.rewards_class = ROS2Data(self, "rewards", self.tf_wrapper, required=False)
         self.collecting_data = False
         self.DestroyDataSubscribers()
             
@@ -253,6 +259,7 @@ class ROS2EnvLoggerServer(Node):
                 print("No topics to subscribe to for {}".format(topic_type))
                 
     def DestroyDataSubscribers(self):
+        print("Destroying Data Subscribers.")
         for subscription in self.subscribers:
             self.destroy_subscription(subscription)
         self.subscribers = {}
@@ -265,9 +272,6 @@ class ROS2EnvLoggerServer(Node):
             self.observation_class.TopicCallback(msg, topic_name)
         elif topic_type == "rewards":
             self.rewards_class.TopicCallback(msg, topic_name)
-
-    def GetNewUTCStr(self):
-        return str(datetime.datetime.utcnow())
     
     def GetROSTopicsAndTypes(self):
         # The first element of each tuple is the topic name and the second element is a list of topic types.
@@ -327,8 +331,8 @@ class ROS2EnvLoggerServer(Node):
                 self.get_logger().error("No Action Data or Observation Data. Not starting writer.")
                 return res
             
-            # make env
-            self.env = ROS2EnvLogger(
+            # make the data collector
+            self.data_collector = ROS2_RLDS(
                 self,
                 self.action_class.Get,
                 self.observation_class.Get,
@@ -339,24 +343,17 @@ class ROS2EnvLoggerServer(Node):
                 reward_cb=self.rewards_class.Get
             )
             
-            # start the environment
-            self.env.RunTimer()
+            # start the data collector
+            self.data_collector.RunTimer()
             
             self.collecting_data = True
             res.success = True
         return res
-    
-    def Join(self):
-        if (self.env_logger_thread != None):
-            self.get_logger().info("Joining env_logger_thread")
-            self.env_logger_thread.join()
-            self.get_logger().info("env_logger_thread is done.")
-            self.env_logger_thread = None
         
     def StopWriter(self, req, res):
         if (self.collecting_data):
-            # stop the environment
-            self.env.EndTimer()
+            # stop the data collector
+            self.data_collector.EndTimer()
             # destroy subscribers
             self.DestroyDataSubscribers()
             res.success = True
@@ -473,9 +470,9 @@ class ROS2EnvLoggerServer(Node):
             json_dict = json.load(f)
             
         # load into classes
-        self.action_class.Load(json_dict["actions"])
-        self.observation_class.Load(json_dict["observations"])
-        self.rewards_class.Load(json_dict["rewards"])
+        self.action_class.Load(json_dict)
+        self.observation_class.Load(json_dict)
+        self.rewards_class.Load(json_dict)
         
         # start subscribers
         self.CreateDataSubscribers("actions")
@@ -486,7 +483,7 @@ class ROS2EnvLoggerServer(Node):
         res.success = True
         return res
     
-    ############## Environment Callbacks ##############
+    ############## Data Collector Callbacks ##############
     def HasEpisodeBegun(self):
         return self._enabled
     
@@ -499,7 +496,7 @@ class ROS2EnvLoggerServer(Node):
 def main(args=None):
     # make the ROS class
     rclpy.init(args=args)
-    node = ROS2EnvLoggerServer()
+    node = ROS2ToRLDSServer()
 
     # start the ros node
     print("Spin")
@@ -510,7 +507,7 @@ def main(args=None):
     
     # clean up
     print("Clean Up.")
-    # node.Join()
+    pass
 
 if __name__ == '__main__':
     main()

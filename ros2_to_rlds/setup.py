@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'ros2-to-rlds'
+package_name = 'ros2_to_rlds'
 
 setup(
     name=package_name,
@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'ros2_rlds_server = ros2_to_rlds.ros2_rlds_server:main',
         ],
     },
 )
