@@ -8,10 +8,11 @@ import copy
 from std_msgs.msg import Float32, Bool
 from sensor_msgs.msg import JointState
 from geometry_msgs.msg import TransformStamped
+import rosidl_parser
 from rosidl_runtime_py import message_to_ordereddict
+from rosidl_runtime_py.utilities import get_message
 
-
-ALLOW_STRING_DATA = True
+ALLOW_STRING_DATA = False
 ALLOW_SEQUENCE_FEATURES = False # https://github.com/google-deepmind/envlogger/issues/14
 
 def ros2_to_dict(msg):
@@ -120,3 +121,59 @@ def ConvertRos2DictToDict(dd):
         out_dd[k] = ros2_to_dict(v)
         
     return out_dd
+
+"""
+msg_class: the class of the ROS2 message, NOT an instance
+
+INCOMPLETE, 
+UNTESTED
+"""
+def ConvertMsgToTFDSFeatures(msg):
+    # output
+    out_dd = {}
+    
+    # get the msg class
+    msg_class = type(msg)
+    
+    # zip the field, field_type, and slot types
+    zipped = zip(msg_class.get_fields_and_field_types().keys(), msg_class.get_fields_and_field_types().values(), msg_class.SLOT_TYPES)
+    
+    
+    for field, field_type, slot_type in zipped:
+        v = getattr(msg, field)
+        
+        # if the field is a sequence of a NON builtin
+        if field_type.find("sequence") != -1 and field_type.find("/") != -1:
+            # NOT ALLOWED. WARN AND SKIP
+            print("WARNING: Sequences of messages incompatible with TFDS right now. Skipping this feature.")
+            continue
+        
+        # if the field_type contains a string
+        if field_type.find("string") != -1:
+            # NOT ALLOWED. WARN AND SKIP
+            print("WARNING: Strings incompatible with TFDS right now. Skipping this feature.")
+            continue
+            
+        # if the field_type is another message
+        if field_type.find("/") != -1:
+            # get the embedded message
+            new_msg = get_message(field_type)
+            
+            # recurse
+            out_dd[field] = ConvertMsgToTFDSFeatures(new_msg)
+            
+        # if the field_type is a sequence and a non-string builtin
+        if field_type.find("sequence") != -1 and type(slot_type) == rosidl_parser.definition.BasicType:
+            # zero-length protection
+            pass
+            
+            # non-zero length
+            element0 = v[0]
+            dtype = np.array(element0).dtype
+            shape = (len(v), ) # 1-d shape of length len(v)
+            # tensor
+            out_dd[k] = tfds.features.Tensor(shape=shape, dtype=dtype, encoding=tfds.features.Encoding.ZLIB)
+            
+            
+    # finally, return the correct type
+    return tfds.features.FeaturesDict(out_dd)

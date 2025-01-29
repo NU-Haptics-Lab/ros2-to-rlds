@@ -130,6 +130,10 @@ class ROS2ToRLDSServer(Node):
         self.data_dir = os.path.join(self.user_str, 'data')
         self.data_dir_local_name = uuid.uuid4().hex # randomly generated folder name
         self.data_dir_full_name = os.path.join(self.data_dir, self.data_dir_local_name)
+        
+        # ROS2 parameters
+        self.declare_parameter('enable_topic', "~/in/enable")
+        self.enable_topic = self.get_parameter('enable_topic').get_parameter_value().string_value
 
         # vars
         self.subscribers = {}
@@ -139,7 +143,7 @@ class ROS2ToRLDSServer(Node):
         self.rate = 10 # default hz
         
         # movestate subscriber
-        self.sub1 = self.create_subscription(Int32, "/avatar/safety/movestate", self.MovestateCB, 10)
+        self.sub1 = self.create_subscription(Bool, self.enable_topic, self.EnableCB, 10)
         self._enabled = False
         
         # pubs
@@ -192,19 +196,9 @@ class ROS2ToRLDSServer(Node):
         self.rewards_class = ROS2Data(self, "rewards", self.tf_wrapper, required=False)
         self.collecting_data = False
         self.DestroyDataSubscribers()
-            
-    def MovestateCB(self, msg):
-        """
-        enum class MOVESTATE {
-            STOP,
-            INACTIVE,
-            ACTIVE,
-            ENABLED,
-            SAFETY,
-            EGM_RESET,
-        };
-        """
-        self._enabled = msg.data == 3
+        
+    def EnableCB(self, msg):
+        self._enabled = msg.data
         self.pub1.publish(Bool(data=self._enabled))
         
         """

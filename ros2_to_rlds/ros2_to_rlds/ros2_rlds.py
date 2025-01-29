@@ -144,7 +144,7 @@ class ROS2_RLDS():
     def Termination(self):
         self.timestep = dm_env.termination(reward=self.GetNextReward(), observation=self.GetNextObservation())
         data = StepData(self.timestep, self.GetNextAction())
-        self.backend.record_step(data, False)
+        self.backend.record_step(data=data, is_new_episode=False)
         
     """ Core interaction with the TFDS backend writer. """
     def TimerCore(self):

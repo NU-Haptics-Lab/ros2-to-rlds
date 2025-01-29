@@ -21,6 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'ros2_rlds_server = ros2_to_rlds.ros2_rlds_server:main',
+            'test_data_collection_publisher = ros2_to_rlds.test_data_collection_publisher:main',
         ],
     },
 )
